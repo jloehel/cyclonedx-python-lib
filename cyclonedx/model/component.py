@@ -19,8 +19,9 @@ import re
 from collections.abc import Iterable
 from enum import Enum
 from os.path import exists
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 from warnings import warn
+from xml.etree.ElementTree import Element  # nosec B405
 
 # See https://github.com/package-url/packageurl-python/issues/65
 import py_serializable as serializable
@@ -64,6 +65,10 @@ from .dependency import Dependable
 from .issue import IssueType
 from .license import License, LicenseRepository, _LicenseRepositorySerializationHelper
 from .release_note import ReleaseNotes
+from .target import BomTarget
+
+if TYPE_CHECKING:  # pragma: no cover
+    from py_serializable import ObjectMetadataLibrary, ViewType
 
 
 @serializable.serializable_class
@@ -192,6 +197,795 @@ class Commit:
 
 
 @serializable.serializable_class
+class Frame:
+    """
+    Our internal representation of the `componentEvidenceCallstackFrameType` complex type.
+
+    Within a call stack, a frame is a discrete unit that encapsulates an execution context,
+    including local variables, parameters, and the return address. As function calls are made,
+    frames are pushed onto the stack, forming an array-like structure that orchestrates the flow of
+    program execution and manages the sequence of function invocations.
+
+    .. note::
+        See the CycloneDX Schema definition: https://cyclonedx.org/docs/1.6/json/#components_items_evidence_callstack_frames
+    """
+
+    def __init__(
+        self, *,
+        module: str,
+        package: Optional[str] = None,
+        function: Optional[str] = None,
+        parameters: Optional[Iterable[str]] = None,
+        line: Optional[int] = None,
+        column: Optional[int] = None,
+        full_filename: Optional[str] = None,
+    ) -> None:
+        self.module = module
+        self.package = package
+        self.function = function
+        self.parameters = parameters or [] # type:ignore[assignment]
+        self.line = line
+        self.column = column
+        self.full_filename = full_filename
+
+    @property
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_sequence(2)
+    def module(self) -> str:
+        """
+        A module or class that encloses functions/methods and other code
+
+        Returns:
+            `str`
+        """
+        return self._module
+
+    @module.setter
+    def module(self, module: str) -> None:
+        self._module = module
+
+    @property
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_sequence(1)
+    def package(self) -> Optional[str]:
+        """
+        A package organizes modules into namespaces, providing a unique namespace for each type it
+        contains.
+
+        Returns:
+            `str` if set else `None`
+        """
+        return self._package
+
+    @package.setter
+    def package(self, package: Optional[str]) -> None:
+        self._package = package
+
+    @property
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_sequence(3)
+    def function(self) -> Optional[str]:
+        """
+        A block of code designed to perform a particular task.
+
+        Returns:
+            `str` if set else `None`
+        """
+        return self._function
+
+    @function.setter
+    def function(self, function: Optional[str]) -> None:
+        self._function = function
+
+    @property
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_array(serializable.XmlArraySerializationType.NESTED, 'parameter')
+    @serializable.xml_sequence(4)
+    def parameters(self) -> 'SortedSet[str]':
+        """
+        Optional arguments that are passed to the module or parameters.
+
+        Returns:
+            Set of `str`
+        """
+        return self._parameters
+
+    @parameters.setter
+    def parameters(self, parameters: Optional[Iterable[str]]) -> None:
+        self._parameters = SortedSet(parameters)
+
+    @property
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_sequence(5)
+    def line(self) -> Optional[int]:
+        """
+        The line number the code that is called resides on.
+
+        Returns:
+            `int` if set else `None`
+        """
+        return self._line
+
+    @line.setter
+    def line(self, line: Optional[int]) -> None:
+        self._line = line
+
+    @property
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_sequence(6)
+    def column(self) -> Optional[int]:
+        """
+        The column the code that is called resides.
+
+        Returns:
+            `int` if set else `None`
+        """
+        return self._column
+
+    @column.setter
+    def column(self, column: Optional[int]) -> None:
+        self._column = column
+
+    @property
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_sequence(7)
+    def full_filename(self) -> Optional[str]:
+        """
+        The full path and filename of the module.
+
+        Returns:
+            `str` if set else `None`
+        """
+        return self._full_filename
+
+    @full_filename.setter
+    def full_filename(self, full_filename: Optional[str]) -> None:
+        self._full_filename = full_filename
+
+    def __comparable_tuple(self) -> _ComparableTuple:
+        return _ComparableTuple((
+            self.module,
+            self.package,
+            _ComparableTuple(self.parameters),
+            self.line,
+            self.column,
+            self.full_filename,
+        ))
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, Frame):
+            return self.__comparable_tuple() == other.__comparable_tuple()
+        return False
+
+    def __lt__(self, other: Any) -> bool:
+        if isinstance(other, Frame):
+            return self.__comparable_tuple() < other.__comparable_tuple()
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self.__comparable_tuple())
+
+    def __repr__(self) -> str:
+        return f'<Frame id={id(self)}, hash={hash(self)}>'
+
+
+@serializable.serializable_class
+class Callstack:
+    """
+    Our internal representation of the `componentEvidenceCallstackType` complex type.
+
+    Evidence of the components use through the callstack.
+
+    .. note::
+        See the CycloneDX Schema definition: https://cyclonedx.org/docs/1.6/json/#components_items_evidence_callstack
+    """
+
+    def __init__(
+        self, *,
+        frames: Optional[Iterable[Frame]] = None,
+    ) -> None:
+        self.frames = frames or [] # type:ignore[assignment]
+
+    @property
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_array(serializable.XmlArraySerializationType.NESTED, 'frame')
+    @serializable.xml_sequence(1)
+    def frames(self) -> 'SortedSet[Frame]':
+        """
+        A list of zero or more frames.
+
+        Returns:
+            Set of `Frame`
+        """
+        return self._frames
+
+    @frames.setter
+    def frames(self, frames: Iterable[Frame]) -> None:
+        self._frames = SortedSet(frames)
+
+    def __comparable_tuple(self) -> _ComparableTuple:
+        return _ComparableTuple((
+            _ComparableTuple(self.frames),
+        ))
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, Callstack):
+            return self.__comparable_tuple() == other.__comparable_tuple()
+        return False
+
+    def __hash__(self) -> int:
+        return hash(self.__comparable_tuple())
+
+    def __repr__(self) -> str:
+        return f'<Callstack id={id(self)}, hash={hash(self)}>'
+
+
+@serializable.serializable_class
+class Occurrence:
+    """
+    Our internal representation of the `componentEvidenceOccurrenceType` complex type
+
+    Evidence of individual instances of a component spread across multiple locations.
+
+    .. note::
+        See the CycloneDX Schema definition: https://cyclonedx.org/docs/1.5/json/#components_items_evidence_occurrences
+    """
+
+    def __init__(
+        self, *,
+        location: str,
+        bom_ref: Optional[Union[str, BomRef]] = None,
+        line: Optional[int] = None,
+        offset: Optional[int] = None,
+        symbol: Optional[str] = None,
+        additional_context: Optional[str] = None,
+    ) -> None:
+        self.location = location
+        self._bom_ref = _bom_ref_from_str(bom_ref)
+        self.line = line
+        self.offset = offset
+        self.symbol = symbol
+        self.additional_context = additional_context
+
+    @property
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_sequence(1)
+    def location(self) -> str:
+        """
+        The location or path to where the component was found.
+
+        Returns:
+            `str`
+        """
+        return self._location
+
+    @location.setter
+    def location(self, location: str) -> None:
+        self._location = location
+
+    @property
+    @serializable.json_name('bom-ref')
+    @serializable.type_mapping(BomRef)
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_name('bom-ref')
+    @serializable.xml_attribute()
+    def bom_ref(self) -> BomRef:
+        """
+        An optional identifier which can be used to reference the occurrence elsewhere in the BOM.
+        Every bom-ref MUST be unique within the BOM.
+
+        Returns:
+            `BomRef`
+        """
+        return self._bom_ref
+
+    @property
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_sequence(2)
+    def line(self) -> Optional[int]:
+        """
+        The line number where the component was found.
+
+        Returns:
+            `int` if set else `None`
+        """
+        return self._line
+
+    @line.setter
+    def line(self, line: Optional[int]) -> None:
+        self._line = line
+
+    @property
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_sequence(3)
+    def offset(self) -> Optional[int]:
+        """
+        The offset where the component was found.
+
+        Returns:
+            `int` if set else `None`
+        """
+        return self._offset
+
+    @offset.setter
+    def offset(self, offset: Optional[int]) -> None:
+        self._offset = offset
+
+    @property
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_sequence(4)
+    def symbol(self) -> Optional[str]:
+        """
+        The symbol name that was found associated with the component.
+
+        Returns:
+            `str` if set else `None`
+        """
+        return self._symbol
+
+    @symbol.setter
+    def symbol(self, symbol: Optional[str]) -> None:
+        self._symbol = symbol
+
+    @property
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_sequence(5)
+    def additional_context(self) -> Optional[str]:
+        """
+        Any additional context of the detected component (e.g. a code snippet).
+
+        Returns:
+            `str` if set else `None`
+        """
+        return self._additional_context
+
+    @additional_context.setter
+    def additional_context(self, additional_context: Optional[str]) -> None:
+        self._additional_context = additional_context
+
+    def __comparable_tuple(self) -> _ComparableTuple:
+        return _ComparableTuple((
+            self.location,
+            self.bom_ref.value,
+            self.line,
+            self.offset,
+            self.symbol,
+            self.additional_context,
+        ))
+
+    def __lt__(self, other: Any) -> bool:
+        if isinstance(other, Occurrence):
+            return self.__comparable_tuple() < other.__comparable_tuple()
+        return NotImplemented
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, Occurrence):
+            return self.__comparable_tuple() == other.__comparable_tuple()
+        return False
+
+    def __hash__(self) -> int:
+        return hash(self.__comparable_tuple())
+
+    def __repr__(self) -> str:
+        return f'<Occurrence id={id(self)}, hash={hash(self)}>'
+
+
+@serializable.serializable_enum
+class IdentityField(str, Enum):
+    """
+    Enum object that defines the permissible `field` for a Identity
+    according the CycloneDX schema.
+
+    .. note::
+        See the CycloneDX Schema definition: https://cyclonedx.org/docs/1.6/json/#components_items_evidence_identity_oneOf_i0_items_field
+    """
+    GROUP = 'group'
+    NAME = 'name'
+    VERSION = 'version'
+    PURL = 'purl'
+    CPE = 'cpe'
+    OMNIBORID = 'omniborid'  # Only supported in >= 1.6
+    SWHID = 'swhid'  # Only supported in >= 1.6
+    SWID = 'swid'
+    HASH = 'hash'
+
+
+class _IdentityFieldSerializationHelper(serializable.helpers.BaseHelper):
+    """  THIS CLASS IS NON-PUBLIC API  """
+
+    __CASES: dict[type[serializable.ViewType], frozenset[IdentityField]] = dict()
+    __CASES[SchemaVersion1Dot5] = frozenset({
+        IdentityField.GROUP,
+        IdentityField.NAME,
+        IdentityField.VERSION,
+        IdentityField.PURL,
+        IdentityField.CPE,
+        IdentityField.SWID,
+        IdentityField.HASH,
+    })
+    __CASES[SchemaVersion1Dot6] = __CASES[SchemaVersion1Dot5] | {
+        IdentityField.OMNIBORID,
+        IdentityField.SWHID,
+    }
+
+    @classmethod
+    def __normalize(cls, ct: IdentityField, view: type[serializable.ViewType]) -> Optional[str]:
+        if ct in cls.__CASES.get(view, ()):
+            return ct.value
+        raise SerializationOfUnsupportedComponentTypeException(f'unsupported {ct!r} for view {view!r}')
+
+    @classmethod
+    def json_normalize(cls, o: Any, *,
+                       view: Optional[type[serializable.ViewType]],
+                       **__: Any) -> Optional[str]:
+        assert view is not None
+        return cls.__normalize(o, view)
+
+    @classmethod
+    def xml_normalize(cls, o: Any, *,
+                      view: Optional[type[serializable.ViewType]],
+                      **__: Any) -> Optional[str]:
+        assert view is not None
+        return cls.__normalize(o, view)
+
+    @classmethod
+    def deserialize(cls, o: Any) -> IdentityField:
+        return IdentityField(o)
+
+
+@serializable.serializable_enum
+class IdentityMethodTechnique(str, Enum):
+    """
+    Enum object that defines the permissible `technique` of a method
+    according the CycloneDX schema.
+
+    .. note::
+        See the CycloneDX Schema definition: https://cyclonedx.org/docs/1.6/json/#components_items_evidence_identity_oneOf_i0_items_methods_items_technique
+    """
+    SOURCE_CODE_ANALYSIS = 'source_code_analysis'
+    BINARY_ANALYSIS = 'binary_analysis'
+    MANIFEST_ANALYSIS = 'manifest_analysis'
+    AST_FINGERPRINT = 'ast_fingerprint'
+    HASH_COMPARISON = 'hash_comparison'
+    INSTRUMENTATION = 'instrumentation'
+    DYNAMIC_ANALYSIS = 'dynamic_analysis'
+    FILENAME = 'filename'
+    ATTESTATION = 'attestation'
+    OTHER = 'other'
+
+
+class _IdentityMethodTechniqueSerializationHelper(serializable.helpers.BaseHelper):
+    """  THIS CLASS IS NON-PUBLIC API  """
+
+    __CASES: dict[type[serializable.ViewType], frozenset[IdentityMethodTechnique]] = dict()
+    __CASES[SchemaVersion1Dot5] = frozenset({
+        IdentityMethodTechnique.SOURCE_CODE_ANALYSIS,
+        IdentityMethodTechnique.BINARY_ANALYSIS,
+        IdentityMethodTechnique.MANIFEST_ANALYSIS,
+        IdentityMethodTechnique.AST_FINGERPRINT,
+        IdentityMethodTechnique.HASH_COMPARISON,
+        IdentityMethodTechnique.INSTRUMENTATION,
+        IdentityMethodTechnique.DYNAMIC_ANALYSIS,
+        IdentityMethodTechnique.FILENAME,
+        IdentityMethodTechnique.ATTESTATION,
+        IdentityMethodTechnique.OTHER,
+    })
+    __CASES[SchemaVersion1Dot6] = __CASES[SchemaVersion1Dot5]
+
+    @classmethod
+    def __normalize(cls, ct: IdentityMethodTechnique, view: type[serializable.ViewType]) -> Optional[str]:
+        if ct in cls.__CASES.get(view, ()):
+            return ct.value
+        raise SerializationOfUnsupportedComponentTypeException(f'unsupported {ct!r} for view {view!r}')
+
+    @classmethod
+    def json_normalize(cls, o: Any, *,
+                       view: Optional[type[serializable.ViewType]],
+                       **__: Any) -> Optional[str]:
+        assert view is not None
+        return cls.__normalize(o, view)
+
+    @classmethod
+    def xml_normalize(cls, o: Any, *,
+                      view: Optional[type[serializable.ViewType]],
+                      **__: Any) -> Optional[str]:
+        assert view is not None
+        return cls.__normalize(o, view)
+
+    @classmethod
+    def deserialize(cls, o: Any) -> IdentityMethodTechnique:
+        return IdentityMethodTechnique(o)
+
+
+@serializable.serializable_class
+class IdentityMethod:
+    """
+    Our internal representation of the `componentEvidenceIdentityMethodType` complex type
+
+    .. note::
+        See the CycloneDX Schema Definition:https://cyclonedx.org/docs/1.6/json/#components_items_evidence_identity_oneOf_i0_items_methods
+
+    """
+
+    def __init__(
+        self, *,
+        technique: IdentityMethodTechnique,
+        confidence: float,
+        value: Optional[str],
+    ) -> None:
+        self.technique = technique
+        self.confidence = confidence
+        self.value = value
+
+    @property
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.type_mapping(_IdentityMethodTechniqueSerializationHelper)
+    @serializable.xml_sequence(1)
+    def technique(self) -> IdentityMethodTechnique:
+        """
+        The technique used in this method of analysis.
+
+        Returns:
+            `IdentityMethodTechnique`
+        """
+        return self._technique
+
+    @technique.setter
+    def technique(self, technique: IdentityMethodTechnique) -> None:
+        self._technique = technique
+
+    @property
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_sequence(2)
+    def confidence(self) -> Optional[float]:
+        """
+        The confidence of the evidence from 0 - 1, where 1 is 100% confidence. Confidence is
+        specific to the technique used. Each technique of analysis can have independent
+        confidence.
+
+        Returns:
+            `float` if set else `None`
+        """
+        return self._confidence
+
+    @confidence.setter
+    def confidence(self, confidence: Optional[float]) -> None:
+        self._confidence = confidence
+
+    @property
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_sequence(3)
+    def value(self) -> Optional[str]:
+        """
+        The value or contents of the evidence.
+
+        Returns:
+            `str` if set else `None`
+        """
+        return self._value
+
+    @value.setter
+    def value(self, value: Optional[str]) -> None:
+        self._value = value
+
+    def __comparable_tuple(self) -> _ComparableTuple:
+        return _ComparableTuple((
+            self.technique,
+            self.confidence,
+            self.value,
+        ))
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, IdentityMethod):
+            return self.__comparable_tuple() == other.__comparable_tuple()
+        return False
+
+    def __lt__(self, other: Any) -> bool:
+        if isinstance(other, IdentityMethod):
+            return self.__comparable_tuple() < other.__comparable_tuple()
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self.__comparable_tuple())
+
+    def __repr__(self) -> str:
+        return f'<IdentityMethod id={id(self)}, hash={hash(self)}>'
+
+
+@serializable.serializable_class
+class Identity:
+    """
+    Our internal representation of the `componentEvidenceIdentityType` complex type.
+
+    Evidence that substantiates the identity of a component. The identity may be an object or an
+    array of identity objects. Support for specifying identity as a single object was introduced in
+    CycloneDX v1.5. Arrays were introduced in v1.6. It is recommended that all implementations use
+    arrays, even if only one identity object is specified.
+
+    .. note::
+        See the CycloneDX Schema definition: https://cyclonedx.org/docs/1.6/json/#components_items_evidence_identity
+    """
+
+    def __init__(
+        self, *,
+        field: IdentityField,
+        confidence: Optional[float] = None,
+        concluded_value: Optional[str] = None,
+        methods: Optional[Iterable[IdentityMethod]] = None,
+        tools: Optional[Iterable[BomTarget]] = None,
+    ) -> None:
+        self.field = field
+        self.confidence = confidence
+        self.concluded_value = concluded_value
+        self.methods = methods or []  # type:ignore[assignment]
+        self.tools = tools or []  # type:ignore[assignment]
+
+    @property
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.type_mapping(_IdentityFieldSerializationHelper)
+    @serializable.xml_sequence(1)
+    def field(self) -> IdentityField:
+        """
+        The identity field of the component which the evidence describes.
+
+        Returns:
+            `IdentityField`
+        """
+        return self._field
+
+    @field.setter
+    def field(self, field: IdentityField) -> None:
+        self._field = field
+
+    @property
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_sequence(2)
+    def confidence(self) -> Optional[float]:
+        """
+        The confidence where the component was found.
+
+        Returns:
+            `float` if set else `None`
+        """
+        return self._confidence
+
+    @confidence.setter
+    def confidence(self, confidence: Optional[float]) -> None:
+        self._confidence = confidence
+
+    @property
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_sequence(3)
+    def concluded_value(self) -> Optional[str]:
+        """
+        The concluded_value where the component was found.
+
+        Returns:
+            `str` if set else `None`
+        """
+        return self._concluded_value
+
+    @concluded_value.setter
+    def concluded_value(self, concluded_value: Optional[str]) -> None:
+        self._concluded_value = concluded_value
+
+    @property
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_array(serializable.XmlArraySerializationType.NESTED, 'method')
+    @serializable.xml_sequence(4)
+    def methods(self) -> SortedSet[IdentityMethod]:
+        """
+        The methods used to extract and/or analyze the evidence.
+
+        Returns:
+            Set of `IdentityMethod`
+        """
+        return self._methods
+
+    @methods.setter
+    def methods(self, methods: Iterable[IdentityMethod]) -> None:
+        self._methods = SortedSet(methods)
+
+    @property
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_array(serializable.XmlArraySerializationType.NESTED, 'tool')
+    @serializable.xml_sequence(5)
+    def tools(self) -> 'SortedSet[BomTarget]':
+        """
+        The object in the BOM identified by its bom-ref. This is often a component or service but
+        may be any object type supporting bom-refs. Tools used for analysis should already be
+        defined in the BOM, either in the metadata/tools, components, or formulation.
+
+        Returns:
+            Set of `str`
+        """
+        return self._tools
+
+    @tools.setter
+    def tools(self, tools: Optional[Iterable[BomTarget]]) -> None:
+        self._tools = SortedSet(tools)
+
+    def __comparable_tuple(self) -> _ComparableTuple:
+        return _ComparableTuple((
+            self.field,
+            self.confidence,
+            self.concluded_value,
+            _ComparableTuple(self.methods),
+            _ComparableTuple(self.tools),
+        ))
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, Identity):
+            return self.__comparable_tuple() == other.__comparable_tuple()
+        return False
+
+    def __lt__(self, other: Any) -> bool:
+        if isinstance(other, Identity):
+            return self.__comparable_tuple() < other.__comparable_tuple()
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self.__comparable_tuple())
+
+    def __repr__(self) -> str:
+        return f'<Identity id={id(self)}, hash={hash(self)}>'
+
+
+class _IdentityHelper(serializable.helpers.BaseHelper):
+    @classmethod
+    def json_normalize(
+            cls, o: SortedSet[Identity], *,
+            view: Optional[type['ViewType']],
+            **__: Any
+    ) -> Any:
+        breakpoint()
+
+    @classmethod
+    def json_denormalize(
+            cls, o: Union[list[dict[str, Any]], dict[str, Any]],
+            **__: Any
+    ) -> SortedSet[Identity]:
+        breakpoint()
+
+    @classmethod
+    def xml_normalize(
+        cls, o: SortedSet[Identity], *,
+        element_name: str,
+        view: Optional[type['ViewType']],
+        xmlns: Optional[str],
+        **__: Any
+    ) -> Optional[Element]:
+        breakpoint()
+
+    @classmethod
+    def xml_denormalize(
+        cls, o: Element, *,
+        default_ns: Optional[str],
+        prop_info: 'ObjectMetadataLibrary.SerializableProperty',
+        ctx: type[Any],
+        **kwargs: Any,
+    ) -> SortedSet[Identity]:
+        breakpoint()
+
+
+@serializable.serializable_class
 class ComponentEvidence:
     """
     Our internal representation of the `componentEvidenceType` complex type.
@@ -204,44 +998,74 @@ class ComponentEvidence:
 
     def __init__(
         self, *,
+        identity: Optional[Union[Iterable[Identity], Identity]] = None,
+        occurrences: Optional[Iterable[Occurrence]] = None,
+        callstack: Optional[Callstack] = None,
         licenses: Optional[Iterable[License]] = None,
         copyright: Optional[Iterable[Copyright]] = None,
     ) -> None:
+        self.identity = identity or []  # type:ignore[assignment]
+        self.occurrences = occurrences or []  # type:ignore[assignment]
+        self.callstack = callstack
         self.licenses = licenses or []  # type:ignore[assignment]
         self.copyright = copyright or []  # type:ignore[assignment]
 
-    # @property
-    # ...
-    # @serializable.view(SchemaVersion1Dot5)
-    # @serializable.xml_sequence(1)
-    # def identity(self) -> ...:
-    #    ... # TODO since CDX1.5
-    #
-    # @identity.setter
-    # def identity(self, ...) -> None:
-    #    ... # TODO since CDX1.5
+    @property
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.type_mapping(_IdentityHelper)
+    @serializable.xml_sequence(1)
+    def identity(self) -> SortedSet[Identity]:
+        """
+        Evidence that substantiates the identity of a component. The identity may be an object or an
+        array of identity objects. Support for specifying identity as a single object was introduced
+        in CycloneDX v1.5. Arrays were introduced in v1.6. It is recommended that all
+        implementations use arrays, even if only one identity object is specified.
 
-    # @property
-    # ...
-    # @serializable.view(SchemaVersion1Dot5)
-    # @serializable.xml_sequence(2)
-    # def occurrences(self) -> ...:
-    #    ... # TODO since CDX1.5
-    #
-    # @occurrences.setter
-    # def occurrences(self, ...) -> None:
-    #    ... # TODO since CDX1.5
+        Returns:
+            Set of `Identity`
+        """
+        return self._identity
 
-    # @property
-    # ...
-    # @serializable.view(SchemaVersion1Dot5)
-    # @serializable.xml_sequence(3)
-    # def callstack(self) -> ...:
-    #    ... # TODO since CDX1.5
-    #
-    # @callstack.setter
-    # def callstack(self, ...) -> None:
-    #    ... # TODO since CDX1.5
+    @identity.setter
+    def identity(self, identity: Union[Iterable[Identity], Identity]) -> None:
+        if isinstance(identity, Identity):
+            identity = [identity]
+        self._identity = SortedSet(identity)
+
+    @property
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_sequence(2)
+    def occurrences(self) -> SortedSet[Occurrence]:
+        """
+        Evidence of individual instances of a component spread across multiple locations.
+
+        Returns:
+            Set of `Occurrence`
+        """
+        return self._occurrences
+
+    @occurrences.setter
+    def occurrences(self, occurrences: Iterable[Occurrence]) -> None:
+        self._occurrences = SortedSet(occurrences)
+
+    @property
+    @serializable.view(SchemaVersion1Dot5)
+    @serializable.view(SchemaVersion1Dot6)
+    @serializable.xml_sequence(3)
+    def callstack(self) -> Optional[Callstack]:
+        """
+        Evidence of the components use through the callstack.
+
+        Returns:
+            `Callstack` if set else `None`
+        """
+        return self._callstack
+
+    @callstack.setter
+    def callstack(self, callstack: Callstack) -> None:
+        self._callstack = callstack
 
     @property
     @serializable.type_mapping(_LicenseRepositorySerializationHelper)
@@ -277,6 +1101,9 @@ class ComponentEvidence:
 
     def __comparable_tuple(self) -> _ComparableTuple:
         return _ComparableTuple((
+            _ComparableTuple(self.identity),
+            _ComparableTuple(self.occurrences),
+            self.callstack,
             _ComparableTuple(self.licenses),
             _ComparableTuple(self.copyright),
         ))
