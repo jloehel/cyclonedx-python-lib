@@ -19,7 +19,7 @@ import re
 from collections.abc import Iterable
 from enum import Enum
 from os.path import exists
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union, cast
 from warnings import warn
 from xml.etree.ElementTree import Element  # nosec B405
 
@@ -37,7 +37,9 @@ from ..exception.serialization import (
     SerializationOfUnexpectedValueException,
     SerializationOfUnsupportedComponentTypeException,
 )
+from ..schema import SchemaVersion
 from ..schema.schema import (
+    BaseSchemaVersion,
     SchemaVersion1Dot0,
     SchemaVersion1Dot1,
     SchemaVersion1Dot2,
@@ -721,7 +723,7 @@ class IdentityMethod:
         self, *,
         technique: IdentityMethodTechnique,
         confidence: float,
-        value: Optional[str],
+        value: Optional[str] = None,
     ) -> None:
         self.technique = technique
         self.confidence = confidence
@@ -889,7 +891,7 @@ class Identity:
     @serializable.view(SchemaVersion1Dot6)
     @serializable.xml_array(serializable.XmlArraySerializationType.NESTED, 'method')
     @serializable.xml_sequence(4)
-    def methods(self) -> SortedSet[IdentityMethod]:
+    def methods(self) -> 'SortedSet[IdentityMethod]':
         """
         The methods used to extract and/or analyze the evidence.
 
@@ -955,14 +957,33 @@ class _IdentityHelper(serializable.helpers.BaseHelper):
             view: Optional[type['ViewType']],
             **__: Any
     ) -> Any:
-        breakpoint()
+        if view is not None:
+            schema_version: BaseSchemaVersion = cast(BaseSchemaVersion, view())
+            if schema_version.schema_version_enum >= SchemaVersion.V1_6:
+                return tuple(o)
+            if len(o) > 1:
+                raise SerializationOfUnexpectedValueException(
+                    "The schema version 1.5 only supports a single identity object"
+                )
+            # Not possible because the return type is an array
+            # return o.pop()
+            return tuple(o)
+        return {}
 
     @classmethod
     def json_denormalize(
             cls, o: Union[list[dict[str, Any]], dict[str, Any]],
             **__: Any
-    ) -> SortedSet[Identity]:
-        breakpoint()
+    ) -> 'SortedSet[Identity]':
+        identities: 'SortedSet[Identity]' = SortedSet()
+        if isinstance(o, dict):
+            identity = Identity.from_json(o)  # type:ignore[attr-defined]
+            identities.add(identity)
+        elif isinstance(o, Iterable):
+            for obj in o:
+                identity = Identity.from_json(obj)  # type:ignore[attr-defined]
+                identities.add(identity)
+        return identities
 
     @classmethod
     def xml_normalize(
@@ -981,7 +1002,7 @@ class _IdentityHelper(serializable.helpers.BaseHelper):
         prop_info: 'ObjectMetadataLibrary.SerializableProperty',
         ctx: type[Any],
         **kwargs: Any,
-    ) -> SortedSet[Identity]:
+    ) -> 'SortedSet[Identity]':
         breakpoint()
 
 
@@ -1015,7 +1036,7 @@ class ComponentEvidence:
     @serializable.view(SchemaVersion1Dot6)
     @serializable.type_mapping(_IdentityHelper)
     @serializable.xml_sequence(1)
-    def identity(self) -> SortedSet[Identity]:
+    def identity(self) -> 'SortedSet[Identity]':
         """
         Evidence that substantiates the identity of a component. The identity may be an object or an
         array of identity objects. Support for specifying identity as a single object was introduced
@@ -1030,6 +1051,9 @@ class ComponentEvidence:
     @identity.setter
     def identity(self, identity: Union[Iterable[Identity], Identity]) -> None:
         if isinstance(identity, Identity):
+            warn('a single identity object is deprecated from CycloneDX v1.6 onwards. '
+                 'Please use a Iterable. The identity gets now converted into a Iterable.',
+                 DeprecationWarning)
             identity = [identity]
         self._identity = SortedSet(identity)
 
@@ -1037,7 +1061,7 @@ class ComponentEvidence:
     @serializable.view(SchemaVersion1Dot5)
     @serializable.view(SchemaVersion1Dot6)
     @serializable.xml_sequence(2)
-    def occurrences(self) -> SortedSet[Occurrence]:
+    def occurrences(self) -> 'SortedSet[Occurrence]':
         """
         Evidence of individual instances of a component spread across multiple locations.
 
